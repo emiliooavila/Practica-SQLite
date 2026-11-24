@@ -1,50 +1,155 @@
-# Práctica - Gestor de tareas SQLite multiplataforma
+# Gestor de tareas local con SQLite (multiplataforma)
 
-**Código base deliberadamente incompleto.** Su objetivo es ofrecer una pantalla Flutter que se pueda ejecutar desde el primer momento; **NO implementa SQLite, CRUD ni persistencia**.
+Aplicación Flutter que administra tareas de forma **totalmente local**, sin servidor, sin
+MySQL y sin conexión a internet. Una sola base de código para Android, iOS, Windows, Linux,
+macOS y web.
 
-## Preparación
+> Práctica de *Programación de Dispositivos Móviles* — Ingeniería en Sistemas Computacionales,
+> Universidad Autónoma de Aguascalientes.
 
-1. Instala Flutter y comprueba `flutter doctor -v`.
-2. Crea un proyecto nuevo **con este nombre**, para que coincida el `package:` usado en la prueba inicial:
+## Estado del desarrollo
 
-   ```bash
-   flutter create gestor_tareas_local
-   cd gestor_tareas_local
-   ```
+| Etapa | Alcance | Estado |
+| --- | --- | --- |
+| 1. Preparación y diseño | Dependencias, decisión de persistencia y esquema de la tabla | Completada |
+| 2. Persistencia real | Apertura de la base, alta y consulta | Pendiente |
+| 3. Operaciones restantes | Edición, cambio de estado, eliminación y validación | Pendiente |
+| 4. Compatibilidad y pruebas | Web (wasm + worker), plataforma nativa y pruebas automatizadas | Pendiente |
 
-3. Copia al proyecto generado las carpetas `lib/` y `test/` de esta base. No sobrescribas las carpetas `android/`, `ios/`, `web/`, `windows/`, `linux/` ni `macos/` generadas por Flutter.
-4. Ejecuta:
+## Tecnología de persistencia elegida
 
-   ```bash
-   flutter pub get
-   flutter analyze
-   flutter test
-   flutter run -d chrome
-   ```
+**SQLite mediante [Drift](https://drift.simonbinder.eu/) 2.35.4 y
+[drift_flutter](https://pub.dev/packages/drift_flutter) 0.3.1.**
 
-   Sustituye `chrome` por otro identificador de `flutter devices` si lo necesitas.
+### ¿Por qué Drift y no otra opción?
 
-## Tarea por realizar
+- `sqflite` solo cubre Android/iOS/macOS: dejaría fuera web, Windows y Linux, que son
+  requisito de la práctica.
+- Usar `sqlite3` a mano obliga a escribir SQL, mapear filas y abrir la base de forma distinta
+  en cada plataforma.
+- **Drift** es una capa tipada sobre SQLite que funciona en las seis plataformas, genera el
+  código de tablas y consultas con `build_runner`, ofrece *streams* reactivos (la lista se
+  actualiza sola después de cada escritura) y permite inyectar una base en memoria para las
+  pruebas.
+- **drift_flutter** aporta `driftDatabase(...)`, que elige automáticamente el motor adecuado:
+  SQLite nativo (FFI) en Android, iOS, Windows, Linux y macOS; SQLite compilado a WebAssembly
+  en el navegador.
 
-- Persistencia SQLite real en Android, iOS, Windows, Linux, macOS y web.
-- Agregar, listar, editar título, marcar completada y eliminar tareas.
-- Comprobar que la información persiste después de cerrar/abrir la app y, en web, después de recargar/cerrar la pestaña en un mismo origen y perfil.
-- Investigar Drift + drift_flutter para compartir una sola base de código entre plataformas.
-- Investigar cómo agregar `sqlite3.wasm` y `drift_worker.dart.js` en `web/` para que la base funcione en el navegador.
-- Añadir pruebas significativas y documentar las plataformas verificadas.
+La información **no se sincroniza entre dispositivos**: cada instalación y cada origen web
+tienen su propia base. Eso es intencional.
 
-Consulta la consigna PDF/LaTeX: contiene pasos de investigación, criterios, evidencias y rúbrica.
+## Diseño de la tabla
 
-## Notas
+Tabla `tareas`, definida como una tabla Dart de Drift (`lib/data/app_database.dart`):
 
-- **No uses una base MySQL ni API REST:** esta práctica es de almacenamiento **local**.
-- **No se acepta una lista solo en memoria** ni guardar la lista como JSON en `shared_preferences` en lugar de SQLite.
-- Los datos de cada instalación/plataforma son propios; no se exige sincronización entre dispositivos.
-- iOS y macOS requieren una Mac para compilarse/probarse; Windows requiere Windows para compilarse y Linux, Linux. La compatibilidad del código sí debe contemplar las seis plataformas.
+| Columna | Tipo SQLite | Restricciones | Propósito |
+| --- | --- | --- | --- |
+| `id` | `INTEGER` | `PRIMARY KEY AUTOINCREMENT NOT NULL` | Identificador único |
+| `titulo` | `TEXT` | `NOT NULL`, no vacío (validado en la app) | Texto de la tarea |
+| `completada` | `INTEGER` | `NOT NULL DEFAULT 0`, `CHECK (completada IN (0, 1))` | Estado pendiente/completada |
 
-### Referencias recomendadas
+Equivalente SQL que genera Drift:
 
-- https://drift.simonbinder.eu/
-- https://drift.simonbinder.eu/platforms/web/
-- https://pub.dev/packages/drift_flutter
-- https://docs.flutter.dev/data-and-backend/persistence/sqlite
+```sql
+CREATE TABLE tareas (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  titulo TEXT NOT NULL,
+  completada INTEGER NOT NULL DEFAULT 0 CHECK (completada IN (0, 1))
+);
+```
+
+### Identificación de registros
+
+- El `id` es un `INTEGER PRIMARY KEY`, que en SQLite es un alias del `rowid` (entero de 64
+  bits). `AUTOINCREMENT` garantiza que un id eliminado no se reutilice.
+- El id **lo asigna SQLite**, nunca la interfaz: al insertar se omite y Drift devuelve el id
+  generado. Editar, cambiar estado y eliminar usan `WHERE id = ?`.
+- SQLite no tiene tipo booleano: `completada` se guarda como `0`/`1` y Drift lo expone como
+  `bool`.
+
+## Arquitectura prevista
+
+```
+lib/
+├── main.dart                  # arranque, tema y creación de la base
+├── data/
+│   ├── app_database.dart      # tabla Tareas, apertura y operaciones CRUD
+│   ├── app_database.g.dart    # generado por build_runner (no se edita a mano)
+│   └── validacion_tarea.dart  # validación de títulos (función pura, testeable)
+├── models/tarea.dart          # modelo base; se sustituye por la clase generada por Drift
+└── screens/
+    └── tareas_page.dart       # interfaz: alta, lista, edición, estado y eliminación
+```
+
+Decisiones de diseño:
+
+- **Una sola instancia** de `AppDatabase` por aplicación, creada fuera de `build()`.
+- **Sin consultas dentro de `build()`**: la lista se obtiene con un `Stream` creado en
+  `initState` y se muestra con `StreamBuilder`; Drift vuelve a emitir cuando cambia la tabla.
+- **Escrituras asíncronas** (`await`) con manejo de errores y mensajes comprensibles.
+- **Validación** con `trim()`: se rechazan títulos vacíos o compuestos solo por espacios.
+- **Cierre de recursos**: el `TextEditingController` y la base se liberan en `dispose()`.
+
+## Ubicación de la base de datos
+
+`drift_flutter` guarda el archivo `gestor_tareas.sqlite` en la carpeta de documentos que
+`path_provider` asigna a la aplicación:
+
+- **Android:** almacenamiento privado de la app (`/data/data/<paquete>/app_flutter/`).
+- **iOS y macOS:** carpeta `Documents` del *sandbox* de la app.
+- **Windows:** carpeta Documentos del usuario.
+- **Linux:** directorio XDG de documentos del usuario.
+- **Web:** no hay archivo; Drift usa el sistema de archivos privado del origen (OPFS) o
+  IndexedDB en el navegador.
+
+Desinstalar la app (o borrar los datos del sitio en el navegador) elimina la base.
+
+## Web: WebAssembly y worker
+
+El navegador no incluye SQLite. Drift necesita dos archivos en `web/`, descargados de la
+misma versión de Drift que usa `pubspec.lock`:
+
+- `sqlite3.wasm`: SQLite compilado a WebAssembly.
+- `drift_worker.dart.js`: worker que ejecuta la base fuera del hilo principal y coordina
+  varias pestañas.
+
+En esta práctica se obtienen del *release* `drift-2.35.4`
+(<https://github.com/simolus3/drift/releases/tag/drift-2.35.4>). El asset del release se llama
+`drift_worker.js`; en el proyecto se guarda como `drift_worker.dart.js`, que es el nombre que
+se pasa a Drift (el nombre es libre, la versión es lo que importa). `flutter run` ya sirve el
+`.wasm` con `Content-Type: application/wasm`. Sin cabeceras COOP/COEP, Drift utiliza
+IndexedDB (más lento, pero persistente); con ellas usa OPFS.
+
+## Cómo ejecutar
+
+```bash
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs   # cuando exista código Drift
+flutter analyze
+flutter test
+flutter run -d chrome      # o linux, windows, macos, android, ios
+```
+
+Para habilitar OPFS en web (opcional):
+
+```bash
+flutter run -d chrome \
+  --web-header=Cross-Origin-Opener-Policy=same-origin \
+  --web-header=Cross-Origin-Embedder-Policy=require-corp
+```
+
+## Pruebas
+
+- Prueba básica de apertura de la interfaz (`test/widget_test.dart`).
+- Pruebas de validación de títulos (etapa 3/4).
+- Pruebas de almacenamiento con `NativeDatabase.memory()`: alta, consulta, edición, cambio
+  de estado y eliminación sin depender de archivos (etapa 4).
+- Comprobaciones manuales P1–P6 sobre una plataforma nativa y web (etapa 4).
+
+## Referencias
+
+- Drift: <https://drift.simonbinder.eu/>
+- Drift en web: <https://drift.simonbinder.eu/platforms/web/>
+- `drift_flutter`: <https://pub.dev/packages/drift_flutter>
+- Persistencia con SQLite en Flutter: <https://docs.flutter.dev/cookbook/persistence/sqlite>
+- Pruebas en Flutter: <https://docs.flutter.dev/testing/overview>
