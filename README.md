@@ -13,7 +13,7 @@ macOS y web.
 | --- | --- | --- |
 | 1. Preparación y diseño | Dependencias, decisión de persistencia y esquema de la tabla | Completada |
 | 2. Persistencia real | Apertura de la base, alta y consulta | Completada |
-| 3. Operaciones restantes | Edición, cambio de estado, eliminación y validación | Pendiente |
+| 3. Operaciones restantes | Edición, cambio de estado, eliminación y validación | Completada |
 | 4. Compatibilidad y pruebas | Web (wasm + worker), plataforma nativa y pruebas automatizadas | Pendiente |
 
 ## Tecnología de persistencia elegida
@@ -74,7 +74,8 @@ lib/
 ├── main.dart                  # arranque, tema y creación de la base
 ├── data/
 │   ├── app_database.dart      # tabla Tareas, apertura y operaciones CRUD
-│   └── app_database.g.dart    # generado por build_runner (no se edita a mano)
+│   ├── app_database.g.dart    # generado por build_runner (no se edita a mano)
+│   └── validacion_tarea.dart  # reglas de validación del título
 └── screens/
     └── tareas_page.dart       # interfaz: alta, lista, edición, estado y eliminación
 ```
@@ -88,7 +89,10 @@ Decisiones de diseño:
 - **Sin consultas dentro de `build()`**: la lista se obtiene con un `Stream` creado en
   `initState` y se muestra con `StreamBuilder`; Drift vuelve a emitir cuando cambia la tabla.
 - **Escrituras asíncronas** (`await`) con manejo de errores y mensajes comprensibles.
-- **Validación** con `trim()`: se rechazan títulos vacíos o compuestos solo por espacios.
+- **Validación** centralizada en `validarTitulo` con `trim()`: se rechazan títulos vacíos,
+  compuestos solo por espacios o de más de 200 caracteres. La misma regla se usa al crear y
+  al editar.
+- **Confirmación antes de eliminar** y mensajes de error comprensibles si una escritura falla.
 - **Cierre de recursos**: el `TextEditingController` y la base se liberan en `dispose()`.
 
 ## Ubicación de la base de datos
@@ -141,12 +145,13 @@ flutter run -d chrome \
 
 ## Pruebas
 
-- `test/widget_test.dart`: la interfaz abre sin errores y una tarea escrita se guarda y
-  aparece en la lista (con base en memoria).
-- `test/app_database_test.dart`: alta/consulta ordenada y, sobre todo, comprobación de que
-  los datos sobreviven al **cerrar y reabrir** una base SQLite en archivo.
-- Pruebas de validación de títulos (etapa 3/4).
-- Pruebas de edición, cambio de estado y eliminación (etapa 4).
+- `test/widget_test.dart`: apertura de la interfaz, alta, rechazo de títulos en blanco,
+  edición, cambio de estado y eliminación con confirmación.
+- `test/validacion_tarea_test.dart`: normalización y validación del título (vacío, solo
+  espacios, máximo de 200 caracteres).
+- `test/app_database_test.dart`: alta/consulta ordenada, edición, cambio de estado,
+  eliminación por id y comprobación de que cada cambio sobrevive al **cerrar y reabrir** una
+  base SQLite en archivo.
 - Comprobaciones manuales P1–P6 sobre una plataforma nativa y web (etapa 4).
 
 `app_database.g.dart` se versiona para que el repositorio se pueda clonar y ejecutar sin

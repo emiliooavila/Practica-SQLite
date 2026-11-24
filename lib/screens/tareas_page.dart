@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../data/app_database.dart';
+import '../data/validacion_tarea.dart';
 
-/// Pantalla principal: alta y consulta de tareas.
+/// Pantalla principal: alta, consulta, edición, estado y eliminación.
 ///
 /// La lista se obtiene de un [Stream] de la base, por lo que se actualiza
 /// sola después de cada escritura. No se ejecutan consultas en `build()`.
@@ -26,40 +27,100 @@ class _TareasPageState extends State<TareasPage> {
   }
 
   Future<void> _agregarTarea() async {
-    final titulo = _tituloController.text.trim();
-    if (titulo.isEmpty) {
-      _mostrarMensaje('El título no puede estar vacío.');
+    final error = validarTitulo(_tituloController.text);
+    if (error != null) {
+      _mostrarMensaje(error);
       return;
     }
 
     try {
-      await widget.database.crearTarea(titulo);
+      await widget.database.crearTarea(normalizarTitulo(_tituloController.text));
       _tituloController.clear();
     } catch (_) {
+      if (!mounted) return;
       _mostrarMensaje('No se pudo guardar la tarea. Inténtalo de nuevo.');
     }
   }
 
-  void _alternarCompletada(Tarea tarea, bool completada) {
-    _pendiente('Implementar actualización de tarea');
+  Future<void> _alternarCompletada(Tarea tarea, bool completada) async {
+    try {
+      final actualizadas =
+          await widget.database.cambiarEstado(tarea.id, completada);
+      if (!mounted) return;
+      if (actualizadas == 0) {
+        _mostrarMensaje('La tarea ya no existe.');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _mostrarMensaje('No se pudo cambiar el estado de la tarea.');
+    }
   }
 
-  void _editarTarea(Tarea tarea) {
-    _pendiente('Implementar edición de título');
+  Future<void> _editarTarea(Tarea tarea) async {
+    final nuevoTitulo = await showDialog<String>(
+      context: context,
+      builder: (context) => _EditarTareaDialog(tituloInicial: tarea.titulo),
+    );
+
+    if (nuevoTitulo == null || !mounted) return;
+    if (nuevoTitulo == tarea.titulo) return;
+
+    try {
+      final actualizadas =
+          await widget.database.actualizarTitulo(tarea.id, nuevoTitulo);
+      if (!mounted) return;
+      if (actualizadas == 0) {
+        _mostrarMensaje('La tarea ya no existe.');
+      } else {
+        _mostrarMensaje('Título actualizado.');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _mostrarMensaje('No se pudo actualizar el título. Inténtalo de nuevo.');
+    }
   }
 
-  void _eliminarTarea(Tarea tarea) {
-    _pendiente('Implementar eliminación de tarea');
+  Future<void> _eliminarTarea(Tarea tarea) async {
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Eliminar tarea'),
+        content: Text(
+          '¿Eliminar "${tarea.titulo}"?\nEsta acción no se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado != true || !mounted) return;
+
+    try {
+      final eliminadas = await widget.database.eliminarTarea(tarea.id);
+      if (!mounted) return;
+      if (eliminadas == 0) {
+        _mostrarMensaje('La tarea ya no existe.');
+      } else {
+        _mostrarMensaje('Tarea eliminada.');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _mostrarMensaje('No se pudo eliminar la tarea. Inténtalo de nuevo.');
+    }
   }
 
   void _mostrarMensaje(String mensaje) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(mensaje)),
     );
-  }
-
-  void _pendiente(String mensaje) {
-    _mostrarMensaje(mensaje);
   }
 
   @override
@@ -134,8 +195,17 @@ class _TareasPageState extends State<TareasPage> {
                               }
                             },
                           ),
-                          title: Text(tarea.titulo),
-                          subtitle: Text('ID: ${tarea.id}'),
+                          title: Text(
+                            tarea.titulo,
+                            style: tarea.completada
+                                ? const TextStyle(
+                                    decoration: TextDecoration.lineThrough,
+                                  )
+                                : null,
+                          ),
+                          subtitle: Text(
+                            tarea.completada ? 'Completada' : 'Pendiente',
+                          ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -161,6 +231,66 @@ class _TareasPageState extends State<TareasPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Diálogo para modificar el título de una tarea existente.
+class _EditarTareaDialog extends StatefulWidget {
+  const _EditarTareaDialog({required this.tituloInicial});
+
+  final String tituloInicial;
+
+  @override
+  State<_EditarTareaDialog> createState() => _EditarTareaDialogState();
+}
+
+class _EditarTareaDialogState extends State<_EditarTareaDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.tituloInicial);
+
+  void _guardar() {
+    if (_formKey.currentState!.validate()) {
+      Navigator.of(context).pop(normalizarTitulo(_controller.text));
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Editar título'),
+      content: Form(
+        key: _formKey,
+        child: TextFormField(
+          controller: _controller,
+          autofocus: true,
+          maxLength: longitudMaximaTitulo,
+          textInputAction: TextInputAction.done,
+          onFieldSubmitted: (_) => _guardar(),
+          validator: (valor) => validarTitulo(valor ?? ''),
+          decoration: const InputDecoration(
+            labelText: 'Título de la tarea',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: _guardar,
+          child: const Text('Guardar'),
+        ),
+      ],
     );
   }
 }
