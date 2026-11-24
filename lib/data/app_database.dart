@@ -57,4 +57,29 @@ class AppDatabase extends _$AppDatabase {
   Future<int> crearTarea(String titulo) {
     return into(tareas).insert(TareasCompanion.insert(titulo: titulo));
   }
+
+  /// Cambia el título de una tarea por su id.
+  ///
+  /// Devuelve cuántas filas se modificaron (0 si el id ya no existe).
+  Future<int> actualizarTitulo(int id, String titulo) {
+    return (update(tareas)..where((t) => t.id.equals(id))).write(
+      TareasCompanion(titulo: Value(titulo)),
+    );
+  }
+
+  /// Marca una tarea como completada o pendiente.
+  ///
+  /// Devuelve cuántas filas se modificaron (0 si el id ya no existe).
+  Future<int> cambiarEstado(int id, bool completada) {
+    return (update(tareas)..where((t) => t.id.equals(id))).write(
+      TareasCompanion(completada: Value(completada)),
+    );
+  }
+
+  /// Elimina una tarea usando su identificador.
+  ///
+  /// Devuelve cuántas filas se borraron (0 si el id ya no existe).
+  Future<int> eliminarTarea(int id) {
+    return (delete(tareas)..where((t) => t.id.equals(id))).go();
+  }
 }
