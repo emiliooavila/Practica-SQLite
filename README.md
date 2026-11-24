@@ -12,7 +12,7 @@ macOS y web.
 | Etapa | Alcance | Estado |
 | --- | --- | --- |
 | 1. Preparación y diseño | Dependencias, decisión de persistencia y esquema de la tabla | Completada |
-| 2. Persistencia real | Apertura de la base, alta y consulta | Pendiente |
+| 2. Persistencia real | Apertura de la base, alta y consulta | Completada |
 | 3. Operaciones restantes | Edición, cambio de estado, eliminación y validación | Pendiente |
 | 4. Compatibilidad y pruebas | Web (wasm + worker), plataforma nativa y pruebas automatizadas | Pendiente |
 
@@ -74,12 +74,13 @@ lib/
 ├── main.dart                  # arranque, tema y creación de la base
 ├── data/
 │   ├── app_database.dart      # tabla Tareas, apertura y operaciones CRUD
-│   ├── app_database.g.dart    # generado por build_runner (no se edita a mano)
-│   └── validacion_tarea.dart  # validación de títulos (función pura, testeable)
-├── models/tarea.dart          # modelo base; se sustituye por la clase generada por Drift
+│   └── app_database.g.dart    # generado por build_runner (no se edita a mano)
 └── screens/
     └── tareas_page.dart       # interfaz: alta, lista, edición, estado y eliminación
 ```
+
+> El modelo `Tarea` que usa la interfaz es la clase que genera Drift a partir de la
+> tabla, por lo que no se mantiene un segundo modelo escrito a mano.
 
 Decisiones de diseño:
 
@@ -124,7 +125,7 @@ IndexedDB (más lento, pero persistente); con ellas usa OPFS.
 
 ```bash
 flutter pub get
-dart run build_runner build --delete-conflicting-outputs   # cuando exista código Drift
+dart run build_runner build    # regenera app_database.g.dart si cambia el esquema
 flutter analyze
 flutter test
 flutter run -d chrome      # o linux, windows, macos, android, ios
@@ -140,11 +141,16 @@ flutter run -d chrome \
 
 ## Pruebas
 
-- Prueba básica de apertura de la interfaz (`test/widget_test.dart`).
+- `test/widget_test.dart`: la interfaz abre sin errores y una tarea escrita se guarda y
+  aparece en la lista (con base en memoria).
+- `test/app_database_test.dart`: alta/consulta ordenada y, sobre todo, comprobación de que
+  los datos sobreviven al **cerrar y reabrir** una base SQLite en archivo.
 - Pruebas de validación de títulos (etapa 3/4).
-- Pruebas de almacenamiento con `NativeDatabase.memory()`: alta, consulta, edición, cambio
-  de estado y eliminación sin depender de archivos (etapa 4).
+- Pruebas de edición, cambio de estado y eliminación (etapa 4).
 - Comprobaciones manuales P1–P6 sobre una plataforma nativa y web (etapa 4).
+
+`app_database.g.dart` se versiona para que el repositorio se pueda clonar y ejecutar sin
+regenerar el código; si se modifica el esquema, se regenera con `dart run build_runner build`.
 
 ## Referencias
 

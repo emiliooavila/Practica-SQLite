@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
-import '../models/tarea.dart';
 
-// Pantalla base SIN persistencia ni operaciones CRUD implementadas.
-// Conserva las indicaciones TODO para orientar tu trabajo.
+import '../data/app_database.dart';
+
+/// Pantalla principal: alta y consulta de tareas.
+///
+/// La lista se obtiene de un [Stream] de la base, por lo que se actualiza
+/// sola después de cada escritura. No se ejecutan consultas en `build()`.
 class TareasPage extends StatefulWidget {
-  const TareasPage({super.key});
+  const TareasPage({super.key, required this.database});
+
+  final AppDatabase database;
 
   @override
   State<TareasPage> createState() => _TareasPageState();
@@ -12,17 +17,27 @@ class TareasPage extends StatefulWidget {
 
 class _TareasPageState extends State<TareasPage> {
   final TextEditingController _tituloController = TextEditingController();
-
-  final List<Tarea> _tareas = [];
+  late final Stream<List<Tarea>> _tareasStream;
 
   @override
   void initState() {
     super.initState();
-
+    _tareasStream = widget.database.observarTareas();
   }
 
-  void _agregarTarea() {
-    _pendiente('Implementar registro de tarea');
+  Future<void> _agregarTarea() async {
+    final titulo = _tituloController.text.trim();
+    if (titulo.isEmpty) {
+      _mostrarMensaje('El título no puede estar vacío.');
+      return;
+    }
+
+    try {
+      await widget.database.crearTarea(titulo);
+      _tituloController.clear();
+    } catch (_) {
+      _mostrarMensaje('No se pudo guardar la tarea. Inténtalo de nuevo.');
+    }
   }
 
   void _alternarCompletada(Tarea tarea, bool completada) {
@@ -37,10 +52,14 @@ class _TareasPageState extends State<TareasPage> {
     _pendiente('Implementar eliminación de tarea');
   }
 
-  void _pendiente(String mensaje) {
+  void _mostrarMensaje(String mensaje) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(mensaje)),
     );
+  }
+
+  void _pendiente(String mensaje) {
+    _mostrarMensaje(mensaje);
   }
 
   @override
@@ -60,6 +79,8 @@ class _TareasPageState extends State<TareasPage> {
           children: [
             TextField(
               controller: _tituloController,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _agregarTarea(),
               decoration: const InputDecoration(
                 labelText: 'Nueva tarea',
                 border: OutlineInputBorder(),
@@ -75,43 +96,67 @@ class _TareasPageState extends State<TareasPage> {
             const Text('Mis tareas', style: TextStyle(fontSize: 18)),
             const SizedBox(height: 8),
             Expanded(
-              child: _tareas.isEmpty
-                  ? const Center(child: Text('Todavía no hay tareas guardadas'))
-                  : ListView.builder(
-                      itemCount: _tareas.length,
-                      itemBuilder: (context, index) {
-                        final tarea = _tareas[index];
-                        return Card(
-                          child: ListTile(
-                            leading: Checkbox(
-                              value: tarea.completada,
-                              onChanged: (valor) {
-                                if (valor != null) {
-                                  _alternarCompletada(tarea, valor);
-                                }
-                              },
-                            ),
-                            title: Text(tarea.titulo),
-                            subtitle: Text('ID: ${tarea.id}'),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  tooltip: 'Editar',
-                                  icon: const Icon(Icons.edit),
-                                  onPressed: () => _editarTarea(tarea),
-                                ),
-                                IconButton(
-                                  tooltip: 'Eliminar',
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed: () => _eliminarTarea(tarea),
-                                ),
-                              ],
-                            ),
+              child: StreamBuilder<List<Tarea>>(
+                stream: _tareasStream,
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return const Center(
+                      child: Text(
+                        'No se pudieron leer las tareas.\n'
+                        'Revisa el almacenamiento de la aplicación.',
+                        textAlign: TextAlign.center,
+                      ),
+                    );
+                  }
+
+                  if (!snapshot.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+
+                  final tareas = snapshot.data!;
+                  if (tareas.isEmpty) {
+                    return const Center(
+                      child: Text('Todavía no hay tareas guardadas'),
+                    );
+                  }
+
+                  return ListView.builder(
+                    itemCount: tareas.length,
+                    itemBuilder: (context, index) {
+                      final tarea = tareas[index];
+                      return Card(
+                        child: ListTile(
+                          leading: Checkbox(
+                            value: tarea.completada,
+                            onChanged: (valor) {
+                              if (valor != null) {
+                                _alternarCompletada(tarea, valor);
+                              }
+                            },
                           ),
-                        );
-                      },
-                    ),
+                          title: Text(tarea.titulo),
+                          subtitle: Text('ID: ${tarea.id}'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: 'Editar',
+                                icon: const Icon(Icons.edit),
+                                onPressed: () => _editarTarea(tarea),
+                              ),
+                              IconButton(
+                                tooltip: 'Eliminar',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () => _eliminarTarea(tarea),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ],
         ),
