@@ -14,7 +14,7 @@ macOS y web.
 | 1. Preparación y diseño | Dependencias, decisión de persistencia y esquema de la tabla | Completada |
 | 2. Persistencia real | Apertura de la base, alta y consulta | Completada |
 | 3. Operaciones restantes | Edición, cambio de estado, eliminación y validación | Completada |
-| 4. Compatibilidad y pruebas | Web (wasm + worker), plataforma nativa y pruebas automatizadas | Pendiente |
+| 4. Compatibilidad y pruebas | Web (wasm + worker), plataforma nativa y pruebas automatizadas | Completada |
 
 ## Tecnología de persistencia elegida
 
@@ -67,7 +67,7 @@ CREATE TABLE tareas (
 - SQLite no tiene tipo booleano: `completada` se guarda como `0`/`1` y Drift lo expone como
   `bool`.
 
-## Arquitectura prevista
+## Arquitectura
 
 ```
 lib/
@@ -93,7 +93,8 @@ Decisiones de diseño:
   compuestos solo por espacios o de más de 200 caracteres. La misma regla se usa al crear y
   al editar.
 - **Confirmación antes de eliminar** y mensajes de error comprensibles si una escritura falla.
-- **Cierre de recursos**: el `TextEditingController` y la base se liberan en `dispose()`.
+- **Cierre de recursos**: el `TextEditingController` se libera en `dispose()`; la base se
+  mantiene abierta durante la vida de la app y las pruebas la cierran explícitamente.
 
 ## Ubicación de la base de datos
 
@@ -119,11 +120,55 @@ misma versión de Drift que usa `pubspec.lock`:
   varias pestañas.
 
 En esta práctica se obtienen del *release* `drift-2.35.4`
-(<https://github.com/simolus3/drift/releases/tag/drift-2.35.4>). El asset del release se llama
-`drift_worker.js`; en el proyecto se guarda como `drift_worker.dart.js`, que es el nombre que
-se pasa a Drift (el nombre es libre, la versión es lo que importa). `flutter run` ya sirve el
-`.wasm` con `Content-Type: application/wasm`. Sin cabeceras COOP/COEP, Drift utiliza
-IndexedDB (más lento, pero persistente); con ellas usa OPFS.
+(<https://github.com/simolus3/drift/releases/tag/drift-2.35.4>) y **ya están incluidos en el
+repositorio**. El asset del release se llama `drift_worker.js`; en el proyecto se guarda como
+`drift_worker.dart.js`, que es el nombre que se pasa a Drift (el nombre es libre, la versión es
+lo que importa).
+
+| Archivo | Tamaño | SHA-256 |
+| --- | --- | --- |
+| `web/sqlite3.wasm` | 758 836 B | `e7451780e78c56ff864fe9317a0fbcd6aeb2e8de3beba7f5efd963202f7ec3d9` |
+| `web/drift_worker.dart.js` | 363 283 B | `48c950cd8e3bc3cddb34816c860e228be8832bef07a297c27e9907c057ff8162` |
+
+`flutter run` ya sirve el `.wasm` con `Content-Type: application/wasm`. Sin cabeceras
+COOP/COEP, Drift utiliza IndexedDB (más lento, pero persistente); con ellas usa OPFS.
+
+## Verificación en plataformas
+
+### Plataformas ejecutadas
+
+| Plataforma | Versión / forma de ejecución | Resultado |
+| --- | --- | --- |
+| **Linux (nativa)** | Flutter 3.47.0, Linux Mint 22.3; `flutter run -d linux` y prueba de integración | Correcto |
+| **Web (Chrome)** | Chrome 158, build release servida en `http://127.0.0.1:8080` | Correcto |
+
+La app nativa guarda la base en `~/Documents/gestor_tareas.sqlite`. La versión web se sirvió
+con `tool/serve_web.py` (origen fijo, MIME `application/wasm`). Sin cabeceras COOP/COEP,
+Drift informó `WasmStorageImplementation.sharedIndexedDb` y persistió correctamente.
+
+**No ejecutadas:** Android, iOS, macOS y Windows. Android tiene SDK 36 instalado, pero las
+licencias no están aceptadas y no hay emulador; iOS/macOS requieren una Mac y Windows requiere
+Windows. El código y las dependencias están preparados para las seis plataformas.
+
+### Comprobaciones P1–P6
+
+| ID | Dónde se comprobó | Resultado |
+| --- | --- | --- |
+| P1 | Linux: app real, 3 altas desde la interfaz y cierre/reapertura completa | Las 3 permanecen |
+| P2 | Linux (app real + reinicio) y Chrome (recarga + reinicio) | El estado se conserva |
+| P3 | Linux (app real + reinicio) y Chrome (recarga + reinicio) | El título nuevo se conserva |
+| P4 | Linux (app real + reinicio) y Chrome (recarga + reinicio) | La tarea no reaparece |
+| P5 | Linux y Chrome | El título vacío/solo espacios no se registra |
+| P6 | Chrome: recarga, cierre/reapertura de pestaña y reinicio completo con el mismo perfil | Los datos permanecen |
+
+Evidencias (capturas de la app tras reiniciar):
+
+- Linux: ![Persistencia en Linux](docs/evidencias/linux_persistencia.png)
+- Web: ![Persistencia en Chrome](docs/evidencias/web_persistencia.png)
+
+En web, el almacenamiento queda asociado al **origen** (`127.0.0.1:8080`) y al **perfil** de
+Chrome. Cambiar de puerto, de perfil, usar modo incógnito o borrar los datos del sitio implica
+empezar sin datos; es una limitación del almacenamiento del navegador, no de la app.
 
 ## Cómo ejecutar
 
@@ -131,11 +176,25 @@ IndexedDB (más lento, pero persistente); con ellas usa OPFS.
 flutter pub get
 dart run build_runner build    # regenera app_database.g.dart si cambia el esquema
 flutter analyze
-flutter test
-flutter run -d chrome      # o linux, windows, macos, android, ios
+flutter test                   # pruebas unitarias y de widgets
+flutter run -d linux           # plataforma nativa (o windows, macos, android, ios)
 ```
 
-Para habilitar OPFS en web (opcional):
+Prueba de integración en una plataforma de escritorio real:
+
+```bash
+flutter test integration_test/app_test.dart -d linux
+```
+
+Web:
+
+```bash
+flutter build web
+python3 tool/serve_web.py build/web 8080
+# abrir http://127.0.0.1:8080 en Chrome
+```
+
+También se puede usar `flutter run -d chrome`. Para habilitar OPFS en web (opcional):
 
 ```bash
 flutter run -d chrome \
@@ -145,14 +204,21 @@ flutter run -d chrome \
 
 ## Pruebas
 
-- `test/widget_test.dart`: apertura de la interfaz, alta, rechazo de títulos en blanco,
-  edición, cambio de estado y eliminación con confirmación.
-- `test/validacion_tarea_test.dart`: normalización y validación del título (vacío, solo
+- `test/validacion_tarea_test.dart` (6): normalización y validación del título (vacío, solo
   espacios, máximo de 200 caracteres).
-- `test/app_database_test.dart`: alta/consulta ordenada, edición, cambio de estado,
-  eliminación por id y comprobación de que cada cambio sobrevive al **cerrar y reabrir** una
-  base SQLite en archivo.
-- Comprobaciones manuales P1–P6 sobre una plataforma nativa y web (etapa 4).
+- `test/app_database_test.dart` (4): alta/consulta ordenada, edición, cambio de estado,
+  eliminación por id y persistencia de cada cambio al **cerrar y reabrir** una base SQLite en
+  archivo.
+- `test/widget_test.dart` (6): apertura de la interfaz, alta, rechazo de títulos en blanco,
+  edición, cambio de estado y eliminación con confirmación.
+- `integration_test/app_test.dart` (1): P1–P5 sobre la app Linux real, con la base persistente
+  de la app, y comprobación tras cerrar y reabrir la base. Deja dos tareas con prefijo
+  `Prueba Linux`; al iniciar, borra solo esas filas para poder repetir la prueba.
+- Web (P6): recarga, cierre/reapertura de pestaña y reinicio completo de Chrome con el mismo
+  perfil y origen; comprobado de forma manual/asistida y documentado arriba.
+
+`flutter test` ejecuta 16 pruebas y `flutter test integration_test/app_test.dart -d linux`
+ejecuta la prueba de integración.
 
 `app_database.g.dart` se versiona para que el repositorio se pueda clonar y ejecutar sin
 regenerar el código; si se modifica el esquema, se regenera con `dart run build_runner build`.
